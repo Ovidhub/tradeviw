@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: typecheck · test · build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Unit + integration tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Backtest CLI smoke test (offline, deterministic)
+        run: npm run demo -- --offline --json > /tmp/backtest.json && node -e "
+          const r = require('/tmp/backtest.json');
+          if (r.synthetic !== true) throw new Error('offline demo must be labelled synthetic');
+          if (!r.results.length) throw new Error('no strategies ran');
+          for (const x of r.results) {
+            if (!Number.isFinite(x.stats.finalEquity)) throw new Error('non-finite equity: ' + x.strategy);
+            if (x.stats.benchmarkReturnPct === undefined) throw new Error('missing benchmark: ' + x.strategy);
+          }
+          console.log('OK:', r.results.length, 'strategies on', r.bars, 'bars');
+        "

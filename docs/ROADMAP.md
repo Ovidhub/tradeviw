@@ -388,6 +388,11 @@ Each phase has a goal, the work, and a **Definition of Done (DoD)** you can lite
 ### Phase 5 — Scripting language + backtester
 **Duration:** 5–6 weeks · **Highest-risk phase — do not start before Phase 2–4 are solid**
 
+> **Priority override (this build).** The backtester is the product's most important
+> tool, so the *engine* was pulled forward into Phase 1 and now runs on real data.
+> What remains in this phase is the scripting language, the visual strategy builder,
+> and the server-side scale-out. See `docs/BACKTESTER.md` for what shipped.
+
 **Goal:** the feature that makes "free TradingView" actually compelling: users write, publish, and backtest their own studies and strategies.
 
 - [ ] Spec `TradeLang`: series-first types, `ta.*` builtins, `input()`, `plot()`, `hline()`, `fill()`, `alert()`, `strategy.*`, `if/else`, loops with gas limits.

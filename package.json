@@ -1,0 +1,31 @@
+{
+  "name": "tradeviw",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The free, open alternative to TradingView. Charting, indicators, backtesting, community \u2014 nothing gated.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @tradeviw/web",
+    "dev:api": "npm run dev --workspace @tradeviw/api",
+    "build": "npm run build --workspace @tradeviw/core && npm run build --workspace @tradeviw/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx scripts/backtest-demo.ts",
+    "lint": "echo 'lint: eslint added in Phase 1.1'"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "5.1.2",
+    "tsx": "4.23.15",
+    "@types/node": "22.14.0"
+  }
+}
