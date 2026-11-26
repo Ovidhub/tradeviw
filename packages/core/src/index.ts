@@ -5,5 +5,8 @@ export * from './backtest/types';
 export * from './backtest/engine';
 export * from './backtest/metrics';
 export * from './backtest/strategies';
+export * from './backtest/sweep';
+export * from './backtest/walkForward';
+export * from './backtest/validation';
 export * from './data/binance';
 export * from './data/synthetic';

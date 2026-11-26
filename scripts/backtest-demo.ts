@@ -22,6 +22,8 @@ import {
   type Timeframe,
   TIMEFRAMES,
 } from '@tradeviw/core';
+import { donchianBreakout, emaCrossAtr, macdTrend, rsiMeanReversion, smaCross, type Strategy } from '@tradeviw/core';
+import { sweep, walkForward, walkForwardSummary, type SweepOptions } from '@tradeviw/core';
 
 interface Args {
   symbol: string;
@@ -33,6 +35,8 @@ interface Args {
   feeBps: number;
   slippageBps: number;
   strategy?: string;
+  sweep?: string;
+  walkForward?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -54,6 +58,8 @@ function parseArgs(argv: string[]): Args {
     feeBps: Number(get('--fee') ?? 10),
     slippageBps: Number(get('--slippage') ?? 5),
     strategy: get('--strategy'),
+    sweep: get('--sweep'),
+    walkForward: get('--walk-forward'),
   };
 }
 
@@ -111,6 +117,40 @@ async function loadSeries(args: Args): Promise<CandleSeries> {
   };
 }
 
+/** Map a user-friendly strategy name to a factory function. */
+const strategyFactories: Record<string, (p: Record<string, unknown>) => Strategy> = {
+  'sma cross': (p) => smaCross(Number(p.fast), Number(p.slow)),
+  'ema crossover': (p) =>
+    emaCrossAtr(Number(p.fast), Number(p.slow), Number(p.atrPeriod), Number(p.atrMult)),
+  'donchian breakout': (p) => donchianBreakout(Number(p.entry), Number(p.exit)),
+  'rsi mean reversion': (p) =>
+    rsiMeanReversion(Number(p.period), Number(p.oversold), Number(p.overbought), Number(p.atrMult)),
+  'macd trend': (p) => macdTrend(Number(p.fast), Number(p.slow), Number(p.signal), Number(p.trailAtr)),
+};
+
+/** Parameter grid per strategy — small enough to run in seconds. */
+const paramGrids: Record<string, Record<string, unknown[]>> = {
+  'sma cross': { fast: [10, 20, 30], slow: [40, 50, 60] },
+  'ema crossover': { fast: [12], slow: [26], atrPeriod: [14], atrMult: [1.5, 2, 3] },
+  'donchian breakout': { entry: [10, 20], exit: [5, 10] },
+  'rsi mean reversion': {
+    period: [14],
+    oversold: [20, 30],
+    overbought: [70, 80],
+    atrMult: [1.5, 2],
+  },
+  'macd trend': { fast: [12], slow: [26], signal: [9], trailAtr: [2, 3] },
+};
+
+const sweepConfig: SweepOptions = {
+  feeBps: 10,
+  slippageBps: 5,
+  leverage: 1,
+  sizing: { type: 'percent_equity', percent: 95 },
+  allowShort: true,
+  rankBy: 'calmar',
+};
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const series = await loadSeries(args);
@@ -125,6 +165,112 @@ async function main() {
     console.log(
       `        costs:  ${args.feeBps} bps fee/side, ${args.slippageBps} bps slippage/side, capital ${args.capital}\n`,
     );
+  }
+
+  // ---- Parameter sweep -------------------------------------------------------
+  if (args.sweep) {
+    const name = args.sweep.toLowerCase();
+    const factory = strategyFactories[name];
+    const grid = paramGrids[name];
+    if (!factory || !grid) {
+      const available = Object.keys(strategyFactories).join(', ');
+      throw new Error(`unknown strategy "${args.sweep}". Available: ${available}`);
+    }
+    const opts = { ...sweepConfig, initialCapital: args.capital };
+    const results = sweep(factory, grid, candles, args.tf, opts);
+
+    if (args.json) {
+      console.log(
+        JSON.stringify(
+          {
+            mode: 'sweep',
+            strategy: args.sweep,
+            symbol: series.symbol.id,
+            timeframe: args.tf,
+            bars: candles.length,
+            synthetic: provenance.synthetic,
+            combinations: results.length,
+            top: results.slice(0, 10).map((r) => ({
+              params: r.params,
+              stats: r.result.stats,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    console.log(`\n── Parameter sweep: ${args.sweep} ──\n`);
+    console.log(`grid size: ${Object.values(grid).reduce((a, b) => a * b.length, 1)} combinations`);
+    console.log(`ranked by: ${sweepConfig.rankBy}\n`);
+    for (const r of results.slice(0, 10)) {
+      console.log(
+        `  ${JSON.stringify(r.params)} → return ${r.result.stats.totalReturnPct.toFixed(2)}%  ` +
+          `DD ${r.result.stats.maxDrawdownPct.toFixed(2)}%  ` +
+          `calmar ${r.result.stats.calmar.toFixed(2)}  trades ${r.result.stats.totalTrades}`,
+      );
+    }
+    const best = results[0]!;
+    console.log(
+      `\n  Best: ${JSON.stringify(best.params)} — return ${best.result.stats.totalReturnPct.toFixed(2)}%`,
+    );
+    return;
+  }
+
+  // ---- Walk-forward ----------------------------------------------------------
+  if (args.walkForward) {
+    const name = args.walkForward.toLowerCase();
+    const factory = strategyFactories[name];
+    const grid = paramGrids[name];
+    if (!factory || !grid) {
+      const available = Object.keys(strategyFactories).join(', ');
+      throw new Error(`unknown strategy "${args.walkForward}". Available: ${available}`);
+    }
+    const opts = {
+      ...sweepConfig,
+      initialCapital: args.capital,
+      trainBars: Math.floor(candles.length * 0.6),
+      testBars: Math.floor(candles.length * 0.2),
+      stepBars: Math.floor(candles.length * 0.2),
+    } as SweepOptions & { trainBars: number; testBars: number; stepBars: number };
+
+    const wf = walkForward(factory, grid, candles, args.tf, opts);
+
+    if (args.json) {
+      console.log(
+        JSON.stringify(
+          {
+            mode: 'walk-forward',
+            strategy: args.walkForward,
+            symbol: series.symbol.id,
+            timeframe: args.tf,
+            bars: candles.length,
+            synthetic: provenance.synthetic,
+            ...wf,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    console.log(`\n── Walk-forward: ${args.walkForward} ──\n`);
+    console.log(walkForwardSummary(wf));
+    console.log('');
+    for (const step of wf.steps) {
+      console.log(
+        `  window ${step.window + 1}: train bars ${step.trainRange.start}-${step.trainRange.end} → ` +
+          `test ${step.testRange.start}-${step.testRange.end}\n` +
+          `    best params: ${JSON.stringify(step.bestParams)}\n` +
+          `    in-sample return : ${step.inSample.result.stats.totalReturnPct.toFixed(2)}%\n` +
+          `    out-of-sample return: ${step.outOfSample.stats.totalReturnPct.toFixed(2)}%  ` +
+          `(buy & hold ${step.outOfSample.stats.benchmarkReturnPct.toFixed(2)}%)\n`,
+      );
+    }
+    return;
   }
 
   const all = strategyLibrary();
